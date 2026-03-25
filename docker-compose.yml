@@ -11,6 +11,19 @@ services:
       - ${VOL_DOCKER_SOCK}
       - ${VOL_DOCKER_BIN}
       - ${VOL_LOCALTIME}
+    environment:
+      # Database config
+      DB_TYPE: ${DB_TYPE}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASS: ${DB_PASS}
+      # SMB config
+      SMB_SHARE: ${SMB_SHARE}
+      SMB_REMOTE_FILE: ${SMB_REMOTE_FILE}
+      SMB_USER: ${SMB_USER}
+      SMB_PASS: ${SMB_PASS}
     networks:
       network-share:
         ipv4_address: ${CONTAINER_IP}

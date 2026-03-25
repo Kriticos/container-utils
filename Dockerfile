@@ -30,6 +30,8 @@ RUN apt update && apt install -y \
     tzdata \
     lsb-release \
     ca-certificates \
+    default-mysql-client \
+    smbclient \
     && apt clean && rm -rf /var/lib/apt/lists/*
 
 # -------------------------------------------------------------------
