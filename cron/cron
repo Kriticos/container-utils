@@ -2,7 +2,7 @@ SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 
 # m h dom mon dow user command
-*/10 * * * * root /usr/local/bin/scripts/zabbix/speedtest/speedtest.sh > /tmp/speedtest.log 2>&1
+*/30 * * * * root /usr/local/bin/scripts/zabbix/speedtest/speedtest.sh > /tmp/speedtest.log 2>&1
 */1  * * * * root /usr/local/bin/scripts/zabbix/speedtest/check_connectivity_level.sh > /tmp/check_connectivity_level.log 2>&1
 */1  * * * * root /usr/local/bin/scripts/zabbix/containers/send_docker_stats.sh > /tmp/send_docker_stats.log 2>&1
 0 23 * * *   root /usr/local/bin/scripts/logs/clean_log.sh > /tmp/speedtest.log 2>&1

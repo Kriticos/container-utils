@@ -2,9 +2,12 @@
 
 HOST="Link - Internet"
 ZABBIX_SERVER="172.18.0.3"
+SPEEDTEST_SERVER_ID="17484"
 
-# Roda o speedtest e captura em JSON
-RESULT=$(speedtest --format=json)
+# Roda o speedtest e captura em JSON.
+# Os flags de aceite evitam falha em execuções não interativas dentro do container.
+RESULT=$(speedtest --server-id="$SPEEDTEST_SERVER_ID" --format=json --progress=no --accept-gdpr --accept-license 2>&1)
+RESULT=$(printf '%s\n' "$RESULT" | awk '/^\{.*\}$/ {json=$0} END {print json}')
 
 # Verifica erro
 [ -z "$RESULT" ] && echo "Erro: speedtest não retornou dados." && exit 1

@@ -1,8 +1,9 @@
 #!/bin/bash
+set -Eeuo pipefail
 
 # -------------------------------------------------------------------
 # Monitoramento de Conectividade — Zabbix Sender
-# Versão: 2.1 (Revisado e otimizado)
+# Versão: 2.2
 # Autor: Kriticos (Ambiente Docker ctr-tools)
 # -------------------------------------------------------------------
 
@@ -11,6 +12,9 @@ ZBX_HOST="Link - Internet"
 ZBX_SERVER="172.18.0.3"
 LOG_FILE="/var/log/connectivity_check.log"
 
+# Arquivo de estado do uptime
+STATE_FILE="/var/tmp/connectivity_uptime.state"
+
 # Parâmetros
 PING_COUNT=3
 PING_TIMEOUT=2
@@ -18,7 +22,7 @@ CURL_TIMEOUT=5
 MAX_RETRIES=2
 
 # Alvos
-GATEWAYS=$(ip route | awk '/default/ {print $3}')
+GATEWAYS=""
 DNS_SERVERS=("8.8.8.8" "1.1.1.1")
 TEST_URLS=("https://www.google.com" "https://www.cloudflare.com" "https://www.microsoft.com")
 
@@ -29,6 +33,55 @@ log_msg() {
     local level=$1
     local msg=$2
     echo "$(date '+%Y-%m-%d %H:%M:%S') [$level] $msg" | tee -a "$LOG_FILE"
+}
+
+# -------------------------------------------------------------------
+# Estado do uptime
+# -------------------------------------------------------------------
+load_state() {
+    LAST_STATUS=0
+    UP_SINCE=0
+
+    if [ -f "$STATE_FILE" ]; then
+        # shellcheck disable=SC1090
+        source "$STATE_FILE" || true
+    fi
+
+    LAST_STATUS="${LAST_STATUS:-0}"
+    UP_SINCE="${UP_SINCE:-0}"
+}
+
+save_state() {
+    cat > "$STATE_FILE" <<EOF
+LAST_STATUS=$LAST_STATUS
+UP_SINCE=$UP_SINCE
+EOF
+}
+
+calculate_link_uptime() {
+    local current_status=$1
+    local now_epoch
+    now_epoch="$(date +%s)"
+
+    load_state
+
+    LINK_UPTIME=0
+
+    if [ "$current_status" -eq 3 ]; then
+        if [ "$LAST_STATUS" -eq 3 ] && [ "$UP_SINCE" -gt 0 ]; then
+            LINK_UPTIME=$((now_epoch - UP_SINCE))
+        else
+            UP_SINCE="$now_epoch"
+            LINK_UPTIME=0
+        fi
+        LAST_STATUS=3
+    else
+        LINK_UPTIME=0
+        UP_SINCE=0
+        LAST_STATUS="$current_status"
+    fi
+
+    save_state
 }
 
 # -------------------------------------------------------------------
@@ -61,15 +114,35 @@ check_tools() {
 send_to_zabbix() {
     local level=$1
     local description=$2
+    local sender_output_level=""
+    local sender_output_uptime=""
+
+    calculate_link_uptime "$level"
 
     log_msg "INFO" "Enviando status ao Zabbix: Nível $level — $description"
+    log_msg "INFO" "Enviando uptime ao Zabbix: $LINK_UPTIME segundos"
 
-    zabbix_sender -z "$ZBX_SERVER" -s "$ZBX_HOST" -k check.connectivity.level -o "$level" >/dev/null 2>&1
+    local rc_level=0
+    if sender_output_level=$(zabbix_sender -z "$ZBX_SERVER" -s "$ZBX_HOST" -k check.connectivity.level -o "$level" 2>&1); then
+        rc_level=0
+    else
+        rc_level=$?
+    fi
 
-    if [ $? -eq 0 ]; then
+    local rc_uptime=0
+    if sender_output_uptime=$(zabbix_sender -z "$ZBX_SERVER" -s "$ZBX_HOST" -k link.uptime -o "$LINK_UPTIME" 2>&1); then
+        rc_uptime=0
+    else
+        rc_uptime=$?
+    fi
+
+    if [ $rc_level -eq 0 ] && [ $rc_uptime -eq 0 ]; then
         log_msg "INFO" "Dados enviados com sucesso ao Zabbix."
     else
-        log_msg "ERROR" "Falha ao enviar dados ao Zabbix Server ($ZBX_SERVER)."
+        [ $rc_level -ne 0 ] && log_msg "ERROR" "Falha ao enviar check.connectivity.level ao Zabbix Server ($ZBX_SERVER)."
+        [ $rc_uptime -ne 0 ] && log_msg "ERROR" "Falha ao enviar link.uptime ao Zabbix Server ($ZBX_SERVER)."
+        [ -n "$sender_output_level" ] && log_msg "ERROR" "Retorno check.connectivity.level: $sender_output_level"
+        [ -n "$sender_output_uptime" ] && log_msg "ERROR" "Retorno link.uptime: $sender_output_uptime"
     fi
 }
 
@@ -78,6 +151,8 @@ send_to_zabbix() {
 # -------------------------------------------------------------------
 test_gateway() {
     log_msg "INFO" "Testando conectividade com gateway..."
+
+    GATEWAYS=$(ip route | awk '/default/ {print $3}')
 
     for gw in $GATEWAYS; do
         log_msg "INFO" "Testando gateway: $gw"
@@ -151,14 +226,20 @@ test_http_access() {
         log_msg "INFO" "Testando URL: $url"
 
         for ((r=1; r<=MAX_RETRIES; r++)); do
-            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time "$CURL_TIMEOUT" "$url")
+            local curl_rc=0
+            if code=$(curl -s -o /dev/null -w "%{http_code}" --max-time "$CURL_TIMEOUT" "$url"); then
+                curl_rc=0
+            else
+                curl_rc=$?
+                code="${code:-000}"
+            fi
 
             if [[ "$code" == "200" || "$code" == "301" || "$code" == "302" ]]; then
                 log_msg "INFO" "HTTP OK — $url retornou código $code"
                 return 0
             fi
 
-            log_msg "WARN" "Falha $r/$MAX_RETRIES — HTTP $code em $url"
+            log_msg "WARN" "Falha $r/$MAX_RETRIES — HTTP $code em $url (curl rc=$curl_rc)"
         done
     done
 
